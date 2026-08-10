@@ -1,0 +1,8 @@
+*.so
+*.apk
+build/
+*.etl
+*.pcap
+apk/
+jadx/
+*.class
