@@ -1,0 +1,10 @@
+#!/system/bin/sh
+echo "=== mrservice(2265) 会话/FPS ==="
+su -c "logcat -d 2>/dev/null | grep -iE '2265' | grep -iE 'XR_SESSION_STATE|mr render' | tail -4"
+echo ""
+echo "=== 渲染进程存活 ==="
+ps -A 2>/dev/null | grep -E "openxr_runtime|mrservice|vrshell"
+echo ""
+echo "=== mrservice eyetrackingclient base (动态) ==="
+su -c "cat /proc/2265/maps | grep libeyetrackingclient.pxr.so | head -1 | cut -d'-' -f1"
+echo "done"

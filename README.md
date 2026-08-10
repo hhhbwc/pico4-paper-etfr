@@ -66,3 +66,7 @@ TrackingService::GetData / SetData / GetTrackingDataSharedMemory  ← 数据输�
 
 ## 许可证
 MIT
+
+## Latest (2026-08-10)
+
+See [docs/2026-08-10-INJECTION-FINDINGS.md](docs/2026-08-10-INJECTION-FINDINGS.md) for the injection-channel validation (lg_confidence live ±1) and the feed-image feasibility conclusion (active alg = Tobii).

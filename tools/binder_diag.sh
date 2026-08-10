@@ -1,0 +1,13 @@
+#!/system/bin/sh
+echo "=== binder 节点统计 (谁连接了 pvr.IEyeTrackingService) ==="
+su -c "cat /sys/kernel/debug/binder/transactions 2>/dev/null | head -40"
+echo ""
+echo "=== binder 状态: 各节点ref ==="
+su -c "cat /sys/kernel/debug/binder/state 2>/dev/null | grep -iE 'EYE|eye|node|proc' | head -40"
+echo ""
+echo "=== 直接 dumpsys binder 看 service 引用 ==="
+su -c "dumpsys binder 2>/dev/null | grep -iE 'IEyeTracking|pxreyetrack' | head -20"
+echo ""
+echo "=== binder_procs: 谁持有 eyetrack binder ==="
+su -c "dumpsys binder --help 2>/dev/null | head -20"
+echo "done"

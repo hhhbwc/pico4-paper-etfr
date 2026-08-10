@@ -1,0 +1,10 @@
+#!/system/bin/sh
+echo "=== 眼追服务(9614)相机相关日志 ==="
+su -c "logcat -d 2>/dev/null | grep -iE ' 9614 |pxreyetrack' | grep -iE 'camera|Camera' | tail -25"
+echo ""
+echo "=== 眼追服务用没用到 CameraManager (openCamera/addImageListener) ==="
+su -c "logcat -d 2>/dev/null | grep -iE 'EyeTrackingService|pxreyetrack' | grep -iE 'openCamera|addImage|CameraImageListener|onFrame|algorithm|Alg' | tail -20"
+echo ""
+echo "=== 有没有眼追算法相关的启动/停止日志 ==="
+su -c "logcat -d 2>/dev/null | grep -iE 'Tobii|phoenix|StandardAlg|startAlg|StopAlg' | tail -20"
+echo "done"

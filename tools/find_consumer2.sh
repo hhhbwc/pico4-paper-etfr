@@ -1,0 +1,13 @@
+#!/system/bin/sh
+echo "=== 谁在日志里谈眼追 (EyeTrackingClient / gaze / eye) ==="
+su -c "logcat -d 2>/dev/null | grep -iE 'eye|gaze|foveat|tracking' | grep -vE 'getprop|Gd3|gyro|accel' | tail -30"
+echo ""
+echo "=== 谁 bind 了 pxreyetrackingservice (binder) ==="
+su -c "cat /proc/*/wchan 2>/dev/null | grep -i pxry >/dev/null 2>&1; ls -la /sys/kernel/debug/binder/transactions 2>/dev/null | head"
+echo "--- 简单: 看 openxr_runtime 与 eyetrackingservice 的连接 ---"
+echo "=== openxr_runtime(2009) 打开的文件/socket 里有没有 eyetrack 相关 ==="
+su -c "ls -la /proc/2009/fd 2>/dev/null | grep -iE 'eye|track|pxr' | head"
+echo "=== 最后: 谁在用 libeyetrackingclient 且有活跃调用 (maps 里已确认 2009 和 2265 都加载) ==="
+echo "=== 决定性: 看 openxr_runtime 有没有 eyetrack 服务的 binder 连接 ==="
+su -c "cat /proc/2009/task/*/stat 2>/dev/null | grep -ciE 'eye' >/dev/null; echo n/a"
+echo "done"

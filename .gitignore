@@ -6,3 +6,24 @@ build/
 apk/
 jadx/
 *.class
+
+# compiled binaries from this session
+inject_foveation
+inject_gaze
+patch_func
+patch_ret1
+ptrace_rw
+ptrace_rw_dyn
+ptrace_dlopen
+dev_ptp.bin
+dev_ptp2.bin
+openxr_base.txt
+
+# large flash/ROM dumps pulled from device
+device-session/tmp/ptp
+device-session/tmp/ptp2
+device-session/tmp/usbcdc_read
+device-session/tmp/vector.zip
+device-session/tmp/winlimit.zip
+device-session/tmp/zygisknext.zip
+device-session/tmp/tp.txt
