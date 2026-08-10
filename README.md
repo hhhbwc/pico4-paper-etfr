@@ -4,6 +4,9 @@
 
 > English: [README.en-US.md](README.en-US.md) · Русский: [README.ru-RU.md](README.ru-RU.md)
 
+## 🔄 给接力 AI / 工程师
+**完整的技术交接档在 [HANDOFF-交接档.md](HANDOFF-%E4%BA%A4%E6%8E%A5%E6%A1%A3.md)** —— 包含设备状态、协议破解、系统架构、hasEyeCamera hook 点(已定位到偏移)、注入链路、工具、风险与预案。接力请先读它。
+
 ## 目标
 
 PICO 4 **标准版没有眼追硬件**，但系统（与 Pro 版同一系统）**完整保留了眼追 + 注视点渲染的软件链路**。本项目的目标是：**注入第三方眼追(Paper)的数据，让系统以为自己有原生眼追，从而启用 ETFR（渲染跟随眼球注视点，节省 GPU）。**
