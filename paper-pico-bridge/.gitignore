@@ -1,0 +1,9 @@
+build/
+build-*/
+*.so
+*.zip
+*.csv
+*.jpg
+*.bin
+module/system/bin/paper_bridge_daemon
+module/zygisk/arm64-v8a.so

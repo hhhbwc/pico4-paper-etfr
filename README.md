@@ -1,72 +1,77 @@
-# PICO 4 + Paper Eye Tracker → 系统级注视点渲染 (ETFR/Foveation)
+# PICO 4 + Paper Eye Tracker
 
-用第三方眼追 **Paper Tracker** 的数据，驱动 **PICO 4 (A8110)** 系统级**注视点渲染（Eye-Tracked Foveated Rendering, ETFR）** 的逆向研究项目。
+将第三方 **Paper Tracker** 接入标准版 **PICO 4 (A8110)** 的研究与开发仓库。当前优先目标是让所有采集、视觉处理和 gaze 样本发布均在 Pico 一体机端完成；在坐标空间和 Runtime 输出结构验证完成后，再评估原生眼动游戏兼容与 ETFR。
 
 > English: [README.en-US.md](README.en-US.md) · Русский: [README.ru-RU.md](README.ru-RU.md)
 
-## 目标
+## 当前状态
 
-PICO 4 **标准版没有眼追硬件**，但系统（与 Pro 版同一系统）**完整保留了眼追 + 注视点渲染的软件链路**。本项目的目标是：**注入第三方眼追(Paper)的数据，让系统以为自己有原生眼追，从而启用 ETFR（渲染跟随眼球注视点，节省 GPU）。**
+已在 root 的 PICO 4 上验证以下一体机端链路：
 
-## 核心结论（逆向已确认）
-
-### 1. Paper 传输的是"图像"，不是"坐标"
-- 传感器是 **3 个 ESP32-S3 USB 设备**：Left Eye (0425:0002) / Right Eye (0425:0003) / Face (0425:0001)
-- PICO app(`com.bridge.papertracker`)用 **libusb 直接读**，不走内核 FTDI 驱动
-- **PICO → PC 只发眼睛图像(240×320 灰度 JPEG)**，UDP 单播 `192.168.1.119:35506 → PC:45454`
-- **注视点坐标 = PC 端从图像计算**（Paper 的"PC 处理数据"本质）
-- 帧协议：`PT` 头(5054 0101) + 帧计数 + 分片序号 + 长度 + JPEG
-
-### 2. PICO 渲染层有完整 ETFR API（链路是通的）
-`libopenxr_api.so` 导出（前 40 个）:
-- `Pxr_GetEyeTrackingData` / `Pxr_GetEyeTrackingData1`
-- `Pxr_StartEyeTracking` / `Pxr_StopEyeTracking`
-- `Pxr_GetEyeTrackingSupported` / `Pxr_GetEyeTrackingState`
-- `Pxr_SetFoveationLevel` / `Pxr_SetFoveationParams` / `Pxr_GetLayerFoveationImage`
-
-**标准版与 Pro 同一系统 → 渲染消费链路存在，只差数据源。**
-
-### 3. 系统眼追服务完整但"空转"（关键状态）
-`pxreyetrackingservice`（注册 binder `pvr.IEyeTrackingService`）:
-```
-The status of eye camera: Nonexistent   <- 标准版无眼追相机
-ET algorithm is not started.
-isSupportEyetracking = 0
-```
-- 服务完整、可 binder 调用，只是**检测到没硬件 → 不自检启动**
-- **`isSupportEyetracking` 是软件判定（可 hook）**
-
-### 4. 系统眼追内部架构
-`libpxreyetrackingservice.so` / `libpxreyetracking.phoenix.so`:
-```
-CameraManager::openCamera/addImageListener → onFrameAvailable  ← 相机图像
-AlgorithmBase::setResultsListener / getTrackingDataSharedMemory  ← 算法
-TrackingService::GetData / SetData / GetTrackingDataSharedMemory  ← 数据输出
+```text
+Paper USB 双眼设备
+→ CDC 初始化 / bulk-IN 读取
+→ raw JPEG 重组
+→ Pico 本地 JPEG 解码
+→ 瞳孔候选检测
+→ 双眼时间配对
+→ 已校准 gaze 样本共享内存
 ```
 
-## 注入路径（已明确，待实现）
+- 动态发现三个 Paper USB 设备：Face `0425:0001`、Left `0425:0002`、Right `0425:0003`。
+- 当前设备实际输出是连续 raw JPEG，而非只有 APK 中存在的 `JPG0` 记录格式；bridge 同时保留两种解析器。
+- Pico 本地已验证左右眼并行读取、JPEG 解码和瞳孔候选检测。
+- `--dual` 是只读诊断采集模式；`--dual-live <seconds> <calibration-file>` 只在有效二进制九点校准文件存在时发布融合 gaze 样本。
+- 缺失、CSV、截断或非有限数值校准文件均会被拒绝，只留下健康 heartbeat。
 
-**方案（劫持系统，复用原生算法+渲染）：**
-1. **hook `isSupportEyetracking` → 返回 true**（总开关）
-2. **让 CameraManager 认为有相机**：把 Paper 的图像喂给系统
-3. 系统算法跑起来 → 算注视点 → 渲染消费 → **ETFR 启用**
+可维护的实现位于 [paper-pico-bridge/](paper-pico-bridge/)。其中包含 CMake 原生工程、设备端 daemon、共享样本 ABI、校准、视觉基础实现、测试和默认关闭的 Zygisk Runtime 探针。
 
-**或备选：hook `Pxr_GetEyeTrackingData` / `SetData` 直接注入坐标。**
+## 已确认的架构结论
 
-## 工具（`tools/`）
-- `usbcdc_read.c` — USB CDC 读取器(NDK 编译)
-- `ptrace_probe.c` — ptrace 注入探测（已确认可 attach）
-- `list_9100.ps1` / `cap_osc.ps1` — PC 端 OSC/网络分析
+### Paper 提供图像流，不是可直接消费的 gaze
 
-## 待办 / 卡点
-- [ ] ptrace 注入 `pxreyetrackingservice`（系统 root 服务，需专门攻坚）
-- [ ] hook `isSupportEyetracking` + 数据源注入
-- [ ] 系统算法数据结构逆向（DataBufferParcelable 注视点格式）
-- [ ] VR 实测渲染是否响应（foveation 跟随）
+Paper 设备经 USB 输出眼部 JPEG 图像。原始 Paper PC 流程在桌面端从图像计算结果；当前 bridge 改为在 Pico 设备端直接读取和处理图像，不依赖 PC 或局域网坐标转发。
+
+### 不再以“把 JPEG 交给 Pico 官方算法”为主线
+
+已验证当前激活的 Pico Tobii 算法路径使用专有数据，并不接受普通 Paper JPEG；将外挂相机图像喂给原生服务不是可用的主线。
+
+当前主线是：
+
+```text
+Paper 图像
+→ Pico 本地视觉 / 校准
+→ 版本化共享 GazeSample
+→ 经验证的 OpenXR Runtime 消费端兼容层
+```
+
+### OpenXR 消费点已定位，但 Hook 默认关闭
+
+当前固件中已定位到：
+
+```text
+pvr::TrackingClient::GetEyeTrackingData(long, int, pxr_eyepose*)
+```
+
+bridge 的 Zygisk 组件仅匹配 OpenXR Runtime，并进行库映射、函数前导和共享样本新鲜度的只读探针。未知固件、无效/过期样本或未校准样本都 fail-closed，保持 Pico 原始行为。
+
+**没有启用 Runtime inline Hook、没有覆盖系统库、没有宣称原生眼动游戏或 ETFR 已经可用。**
+
+## 下一步
+
+1. 实现用户可操作的 Pico 端九点校准，生成受校验的二进制校准文件。
+2. 用真实校准验证 `--dual-live` 连续发布的 gaze 样本、稳定性和延迟。
+3. 建立 Paper gaze 平面坐标与 Pico Runtime 所需坐标空间之间的可验证映射。
+4. 验证 `pxr_eyepose` 的完整输出语义和生命周期。
+5. 在完整 fallback 与可恢复测试通过后，评估短时 Runtime 兼容测试与原生游戏验证。
+6. 最后评估 ETFR；它不是当前已完成的功能。
+
+历史逆向证据、协议资料和早期实验仍保留在 [docs/](docs/) 与 [tools/](tools/) 中；一次性 ptrace 实验工具不属于 `paper-pico-bridge` 的默认运行路径。
+
+## 构建与部署边界
+
+`paper-pico-bridge` 需要 Android NDK、CMake 和 Ninja。其 `tools/build.ps1` 从 `ANDROID_NDK_HOME` 读取 NDK 路径。安全模块的默认 daemon 是空跑模式，不会自动 claim USB；USB 读取及 live gaze 发布必须通过显式 daemon 命令运行。
 
 ## 许可证
+
 MIT
-
-## Latest (2026-08-10)
-
-See [docs/2026-08-10-INJECTION-FINDINGS.md](docs/2026-08-10-INJECTION-FINDINGS.md) for the injection-channel validation (lg_confidence live ±1) and the feed-image feasibility conclusion (active alg = Tobii).

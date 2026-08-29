@@ -1,0 +1,7 @@
+id=paper-pico-bridge
+author=local
+auto_mount=false
+name=Paper Pico Bridge
+version=0.1.0-safe-skeleton
+versionCode=1
+description=Standalone Paper eye tracking bridge; fail-closed development build
