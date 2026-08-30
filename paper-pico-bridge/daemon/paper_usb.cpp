@@ -1,4 +1,5 @@
 #include "paper_usb.h"
+#include "lifecycle.h"
 #include "usbfs_compat.h"
 #include <dirent.h>
 #include <fcntl.h>
@@ -63,19 +64,49 @@ bool PaperUsb::Enumerate(std::string* d) const {
 bool PaperUsb::Find(uint16_t pid, UsbDeviceInfo* out, std::string* d) const {
   if (!out) return false; bool found=false; scan([&](const UsbDeviceInfo& x){if(x.vid==0x0425&&x.pid==pid){*out=x;found=true;return false;}return true;}); if(d)*d=found?"found":"not found"; return found;
 }
-bool PaperUsb::Capture(const UsbDeviceInfo& x,int duration_ms,const FrameCallback& cb,std::string* d) {
-  if (duration_ms <= 0 || duration_ms > 30000 || x.bulk_in < 0) { if (d) *d="invalid bounded capture request"; return false; }
-  int fd=open(x.path.c_str(),O_RDWR|O_CLOEXEC); if(fd<0){if(d)*d=strerror(errno);return false;}
+bool PaperUsb::Capture(const UsbDeviceInfo& x, int duration_ms, const FrameCallback& cb, std::string* d) {
+  if (duration_ms <= 0 || duration_ms > 30000 || x.bulk_in < 0) { if (d) *d = "invalid bounded capture request"; return false; }
+  stop_requested_.store(false);
+  int fd = open(x.path.c_str(), O_RDWR | O_CLOEXEC);
+  if (fd < 0) { if (d) *d = strerror(errno); return false; }
+  bool control_claimed = false, data_claimed = false;
+  auto cleanup = [&] {
+    if (data_claimed) ioctl(fd, USBDEVFS_RELEASEINTERFACE, &x.data_if);
+    if (control_claimed) ioctl(fd, USBDEVFS_RELEASEINTERFACE, &x.control_if);
+    close(fd);
+  };
   std::string diag;
-  if (x.control_if >= 0 && ioctl(fd,USBDEVFS_CLAIMINTERFACE,&x.control_if)<0) { if(d)*d=std::string("claim control failed: ")+strerror(errno); close(fd); return false; }
+  if (x.control_if >= 0 && ioctl(fd, USBDEVFS_CLAIMINTERFACE, &x.control_if) < 0) { if (d) *d = std::string("claim control failed: ") + strerror(errno); cleanup(); return false; }
+  control_claimed = x.control_if >= 0;
   diag += "claim-control=ok; ";
-  if (x.data_if >= 0 && x.data_if != x.control_if && ioctl(fd,USBDEVFS_CLAIMINTERFACE,&x.data_if)<0) { if(d)*d=std::string("claim data failed: ")+strerror(errno); if(x.control_if>=0) ioctl(fd,USBDEVFS_RELEASEINTERFACE,&x.control_if); close(fd); return false; }
+  if (x.data_if >= 0 && x.data_if != x.control_if && ioctl(fd, USBDEVFS_CLAIMINTERFACE, &x.data_if) < 0) { if (d) *d = std::string("claim data failed: ") + strerror(errno); cleanup(); return false; }
+  data_claimed = x.data_if >= 0 && x.data_if != x.control_if;
   diag += "claim-data=ok; ";
-  unsigned char coding[7]={0x00,0xc2,0x01,0x00,0x00,0x00,0x08}; paper_usbdevfs_ctrltransfer ctl{0x21,0x20,0,(unsigned short)(x.control_if<0?0:x.control_if),7,1000,coding}; int cr=ioctl(fd,USBDEVFS_CONTROL,&ctl); diag += "line="+std::to_string(cr)+"/"+(cr<0?strerror(errno):std::string("ok"))+"; ";
-  paper_usbdevfs_ctrltransfer dtr{0x21,0x22,1,(unsigned short)(x.control_if<0?0:x.control_if),0,1000,nullptr}; int dr=ioctl(fd,USBDEVFS_CONTROL,&dtr); diag += "dtr="+std::to_string(dr)+"/"+(dr<0?strerror(errno):std::string("ok"))+"; ";
-  std::vector<uint8_t> buf(16384); const auto until=std::chrono::steady_clock::now()+std::chrono::milliseconds(duration_ms); int reads=0, last_errno=0;
-  while(std::chrono::steady_clock::now()<until) { paper_usbdevfs_bulktransfer bulk{(unsigned int)x.bulk_in,(unsigned int)buf.size(),500,buf.data()}; int n=ioctl(fd,USBDEVFS_BULK,&bulk); ++reads; if(n>0&&cb) cb(x,buf.data(),(size_t)n); else if(n<0) { last_errno=errno; if(errno!=ETIMEDOUT&&errno!=EAGAIN) break; } }
-  if(x.data_if>=0&&x.data_if!=x.control_if) ioctl(fd,USBDEVFS_RELEASEINTERFACE,&x.data_if); if(x.control_if>=0) ioctl(fd,USBDEVFS_RELEASEINTERFACE,&x.control_if); close(fd); if(d)*d=diag+"reads="+std::to_string(reads)+" last="+std::to_string(last_errno)+"/"+strerror(last_errno); return true;
+  unsigned char coding[7] = {0x00, 0xc2, 0x01, 0x00, 0x00, 0x00, 0x08};
+  paper_usbdevfs_ctrltransfer ctl{0x21, 0x20, 0, static_cast<unsigned short>(x.control_if < 0 ? 0 : x.control_if), 7, 1000, coding};
+  if (ioctl(fd, USBDEVFS_CONTROL, &ctl) < 0) { if (d) *d = std::string("line coding failed: ") + strerror(errno); cleanup(); return false; }
+  paper_usbdevfs_ctrltransfer dtr{0x21, 0x22, 1, static_cast<unsigned short>(x.control_if < 0 ? 0 : x.control_if), 0, 1000, nullptr};
+  if (ioctl(fd, USBDEVFS_CONTROL, &dtr) < 0) { if (d) *d = std::string("DTR failed: ") + strerror(errno); cleanup(); return false; }
+  std::vector<uint8_t> buf(16384);
+  const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration_ms);
+  int reads = 0, last_errno = 0;
+  bool ok = true;
+  while (!stop_requested_.load() && !StopRequested() && std::chrono::steady_clock::now() < until) {
+    paper_usbdevfs_bulktransfer bulk{static_cast<unsigned int>(x.bulk_in), static_cast<unsigned int>(buf.size()), 500, buf.data()};
+    int n = ioctl(fd, USBDEVFS_BULK, &bulk);
+    ++reads;
+    if (n > 0 && cb) {
+      try { cb(x, buf.data(), static_cast<size_t>(n)); }
+      catch (...) { last_errno = ECANCELED; ok = false; break; }
+    } else if (n < 0) {
+      last_errno = errno;
+      if (errno != ETIMEDOUT && errno != EAGAIN && errno != EINTR) { ok = false; break; }
+    }
+  }
+  const bool stopped = stop_requested_.load() || StopRequested();
+  cleanup();
+  if (d) *d = diag + "reads=" + std::to_string(reads) + " last=" + std::to_string(last_errno) + "/" + strerror(last_errno);
+  return ok && !stopped;
 }
-void PaperUsb::Stop() {}
+void PaperUsb::Stop() { stop_requested_.store(true); }
 }

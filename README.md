@@ -22,6 +22,8 @@ Paper USB 双眼设备
 - 当前设备实际输出是连续 raw JPEG，而非只有 APK 中存在的 `JPG0` 记录格式；bridge 同时保留两种解析器。
 - Pico 本地已验证左右眼并行读取、JPEG 解码和瞳孔候选检测。
 - `--dual` 是只读诊断采集模式；`--dual-live <seconds> <calibration-file>` 只在有效二进制九点校准文件存在时发布融合 gaze 样本。
+- `--target-record <id> <x> <y> <seconds> [csv]` 会为一个已显示的九点目标追加带标签的双眼采集数据；Pico 端显示 UI 尚未实现。
+- 所有 USB 采集命令限制为 1 到 30 秒，使用独占 daemon 锁；并发启动会失败，而不是争抢 USB。任一眼采集失败时，live 模式不发布完成 heartbeat，target 采集会回滚本次追加行。
 - 缺失、CSV、截断或非有限数值校准文件均会被拒绝，只留下健康 heartbeat。
 
 可维护的实现位于 [paper-pico-bridge/](paper-pico-bridge/)。其中包含 CMake 原生工程、设备端 daemon、共享样本 ABI、校准、视觉基础实现、测试和默认关闭的 Zygisk Runtime 探针。

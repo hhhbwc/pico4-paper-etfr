@@ -1,6 +1,10 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
+RUNDIR=/data/local/tmp/paper-pico-bridge
 if [ -f "$MODDIR/disable" ]; then exit 0; fi
-mkdir -p /data/local/tmp/paper-pico-bridge
+mkdir -p "$RUNDIR"
+chmod 700 "$RUNDIR"
 chmod 755 "$MODDIR/system/bin/paper_bridge_daemon" 2>/dev/null
-exec "$MODDIR/system/bin/paper_bridge_daemon" >>/data/local/tmp/paper-pico-bridge/daemon.log 2>&1
+# No persistent daemon is started until a control-plane/UI exists. Explicit commands
+# acquire the daemon lock for bounded USB capture and release it on exit.
+exit 0

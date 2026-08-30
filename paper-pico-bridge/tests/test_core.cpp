@@ -9,6 +9,7 @@
 #include "eye_hook_controller.h"
 #include "calibration_fit.h"
 #include "calibration_store.h"
+#include "lifecycle.h"
 #include <cassert>
 #include <cstring>
 #include <cmath>
@@ -22,6 +23,7 @@ static int OriginalEyeCall(void*, long, int, void* output) {
 }
 
 int main() {
+  int seconds = 0; assert(ParseBoundedSeconds("1", &seconds) && seconds == 1); assert(ParseBoundedSeconds("30", &seconds) && seconds == 30); assert(!ParseBoundedSeconds("0", &seconds)); assert(!ParseBoundedSeconds("31", &seconds)); assert(!ParseBoundedSeconds("3x", &seconds));
   Jpg0Parser p; std::vector<uint8_t> rec = {'J','P','G','0',7,0,12,0,7,0,0,0,0xff,0xd8,1,2,3,0xff,0xd9};
   std::vector<JpegFrame> frames; p.Feed(rec.data(), 5, &frames); p.Feed(rec.data()+5, rec.size()-5, &frames);
   assert(frames.size() == 1 && frames[0].sequence == 7 && frames[0].jpeg.size() == 7);

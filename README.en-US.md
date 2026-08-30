@@ -24,8 +24,9 @@ The current status is deliberately split into two modes:
 
 - `--dual` is a diagnostic mode. It captures both eyes, decodes frames, runs the pupil detector, and reports statistics. It does not publish a valid gaze sample.
 - `--dual-live <seconds> <calibration-file>` is the explicit live mode. It requires a valid binary calibration file, pairs observations within a 50 ms window, and publishes only fresh fused samples.
+- `--target-record <id> <x> <y> <seconds> [csv]` appends labeled dual-eye observations for one currently displayed calibration target. A Pico-side display UI is not implemented yet.
 
-The live mode is intentionally conservative. A missing, truncated, CSV, non-finite, or otherwise invalid calibration file is rejected. The daemon writes only a healthy heartbeat in that case, so a consumer cannot mistake an uncalibrated result for usable gaze data.
+Every USB capture command is bounded to 1 through 30 seconds and protected by an exclusive daemon lock. A competing invocation fails instead of competing for Paper USB. If either eye capture fails, live mode does not publish a completion heartbeat and target recording rolls back the rows from that target. The live mode is intentionally conservative: a missing, truncated, CSV, non-finite, or otherwise invalid calibration file is rejected, and only then does the daemon write a healthy heartbeat so a consumer cannot mistake an uncalibrated result for usable gaze data.
 
 ## What Has Been Verified
 
