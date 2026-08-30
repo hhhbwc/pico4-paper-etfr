@@ -14,12 +14,20 @@
 #include <cstdio>
 #include <mutex>
 #include <thread>
+#include <cmath>
 using namespace paper_bridge;
 static uint64_t now_ns() { timespec t{}; clock_gettime(CLOCK_MONOTONIC, &t); return uint64_t(t.tv_sec)*1000000000ull + uint64_t(t.tv_nsec); }
 int main(int argc, char** argv) {
   if (argc > 1 && std::string(argv[1]) == "--enumerate") {
     PaperUsb usb; std::string diagnostic; bool ok = usb.Enumerate(&diagnostic);
     std::cout << diagnostic << "\n"; return ok ? 0 : 1;
+  }
+  if (argc > 5 && std::string(argv[1]) == "--target-record") {
+    const int target_id = std::stoi(argv[2]); const float target_x = std::stof(argv[3]); const float target_y = std::stof(argv[4]); const int seconds = std::stoi(argv[5]); const char* path = argc > 6 ? argv[6] : "/data/local/tmp/paper-pico-calibration-labeled.csv";
+    if (target_id < 0 || target_id > 8 || !std::isfinite(target_x) || !std::isfinite(target_y) || seconds <= 0 || seconds > 30) { std::cerr << "invalid target capture arguments\n"; return 2; }
+    std::mutex output; FILE* csv=std::fopen(path,"ab"); if(!csv){std::perror(path);return 5;} if (std::ftell(csv) == 0) std::fprintf(csv,"target_id,target_x,target_y,eye,x,y,confidence,valid,timestamp_ns\n");
+    auto worker = [&](uint16_t pid, const char* label) { PaperUsb usb; UsbDeviceInfo info; std::string msg; if(!usb.Find(pid,&info,&msg)){std::lock_guard<std::mutex> l(output);std::cerr<<label<<" "<<msg<<"\n";return;} RawJpegParser raw; size_t frame=0,valid=0; usb.Capture(info,seconds*1000,[&](const UsbDeviceInfo&,const uint8_t* data,size_t n){std::vector<std::vector<uint8_t>> fs;raw.Feed(data,n,&fs);for(const auto& f:fs){GrayImage im;if(!DecodeJpegToGray(f.data(),f.size(),&im))continue;PupilObservation p=PupilDetector().Detect(im.pixels.data(),im.width,im.height);++frame;if(p.valid)++valid;std::lock_guard<std::mutex> l(output);std::fprintf(csv,"%d,%.6f,%.6f,%s,%.4f,%.4f,%.5f,%d,%llu\n",target_id,target_x,target_y,label,p.x,p.y,p.confidence,p.valid?1:0,(unsigned long long)now_ns());std::fflush(csv);}},&msg); std::lock_guard<std::mutex> l(output);std::cerr<<label<<" "<<msg<<" frames="<<frame<<" valid="<<valid<<"\n"; };
+    std::thread left(worker,2,"left"), right(worker,3,"right"); left.join(); right.join(); std::fclose(csv); return 0;
   }
   if (argc > 2 && std::string(argv[1]) == "--dual-record") {
     const int seconds = std::stoi(argv[2]); const char* path = argc > 3 ? argv[3] : "/data/local/tmp/paper-pico-calibration.csv"; std::mutex output; FILE* csv=std::fopen(path,"wb"); if(!csv){std::perror(path);return 5;} std::fprintf(csv,"timestamp_ns,eye,frame,x,y,radius,confidence,valid\n");
