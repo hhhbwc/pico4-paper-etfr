@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -67,6 +68,10 @@ bool PaperUsb::Find(uint16_t pid, UsbDeviceInfo* out, std::string* d) const {
 bool PaperUsb::Capture(const UsbDeviceInfo& x, int duration_ms, const FrameCallback& cb, std::string* d) {
   if (duration_ms <= 0 || duration_ms > 30000 || x.bulk_in < 0) { if (d) *d = "invalid bounded capture request"; return false; }
   stop_requested_.store(false);
+  if (chmod(x.path.c_str(), 0666) != 0 && errno != EPERM) {
+    if (d) *d = std::string("usb node permission setup failed: ") + strerror(errno);
+    return false;
+  }
   int fd = open(x.path.c_str(), O_RDWR | O_CLOEXEC);
   if (fd < 0) { if (d) *d = strerror(errno); return false; }
   bool control_claimed = false, data_claimed = false;

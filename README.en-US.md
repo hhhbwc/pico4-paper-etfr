@@ -26,7 +26,7 @@ The current status is deliberately split into two modes:
 
 - `--dual` is a diagnostic mode. It captures both eyes, decodes frames, runs the pupil detector, and reports statistics. It does not publish a valid gaze sample.
 - `--dual-live <seconds> <calibration-file>` is the explicit live mode. It requires a valid binary calibration file, pairs observations within a 50 ms window, and publishes only fresh fused samples.
-- `--target-record <id> <x> <y> <seconds> [csv]` appends labeled dual-eye observations for one currently displayed calibration target. A Pico-side display UI is not implemented yet.
+- `--target-record <id> <x> <y> <seconds> [csv]` appends labeled dual-eye observations for one currently displayed calibration target. The companion Pico calibration Activity provides the target display and command orchestration.
 
 Every USB capture command is bounded to 1 through 30 seconds and protected by an exclusive daemon lock. A competing invocation fails instead of competing for Paper USB. If either eye capture fails, live mode does not publish a completion heartbeat and target recording rolls back the rows from that target. The live mode is intentionally conservative: a missing, truncated, CSV, non-finite, or otherwise invalid calibration file is rejected, and only then does the daemon write a healthy heartbeat so a consumer cannot mistake an uncalibrated result for usable gaze data.
 
@@ -60,7 +60,7 @@ This is a functional baseline for integration testing, not a claim of parity wit
 
 ### Calibration and shared samples
 
-The current estimator fits an independent two-dimensional affine mapping for each eye. It maps pupil pixel coordinates to a normalized `[0,1]` gaze plane, clamps the result to that range, and produces per-eye and fused validity/confidence flags.
+The current estimator fits an independent two-dimensional projective homography for each eye. It maps pupil coordinates to a normalized `[0,1]` gaze plane, rejects non-finite or near-zero projective denominators, checks the expected left-to-right and top-to-bottom direction during calibration, and produces per-eye and fused validity/confidence flags. This follows the confirmed PC workflow concepts (`homography`, stable samples, center reference, and direction checks), but it is not a binary or parameter-format-compatible port of the proprietary Windows implementation.
 
 A valid persisted calibration file is exactly 216 bytes and contains:
 

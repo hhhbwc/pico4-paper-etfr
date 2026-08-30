@@ -99,14 +99,15 @@ int run_target_record(int argc, char** argv) {
   if (!csv) { std::perror(path); return 5; }
   std::fseek(csv, 0, SEEK_END);
   const long start_offset = std::ftell(csv);
-  if (start_offset == 0) std::fprintf(csv, "target_id,target_x,target_y,eye,x,y,confidence,valid,timestamp_ns\n");
+  if (start_offset == 0) std::fprintf(csv, "target_id,target_x,target_y,eye,x,y,confidence,valid,timestamp_ns,frame_index,radius\n");
   std::mutex output;
   auto worker = [&](uint16_t pid, const char* label, CaptureResult* result) {
+    size_t frame = 0;
     *result = capture_eye(pid, seconds, label, [&](const PupilObservation& p) {
       std::lock_guard<std::mutex> lock(output);
-      std::fprintf(csv, "%ld,%.6f,%.6f,%s,%.4f,%.4f,%.5f,%d,%llu\n", target_id, target_x, target_y,
+      std::fprintf(csv, "%ld,%.6f,%.6f,%s,%.4f,%.4f,%.5f,%d,%llu,%zu,%.4f\n", target_id, target_x, target_y,
                    label, p.x, p.y, p.confidence, p.valid ? 1 : 0,
-                   static_cast<unsigned long long>(now_ns()));
+                   static_cast<unsigned long long>(now_ns()), ++frame, p.radius);
     });
   };
   CaptureResult left, right;
@@ -114,7 +115,7 @@ int run_target_record(int argc, char** argv) {
   left_thread.join();
   right_thread.join();
   std::fflush(csv);
-  if (!left.ok || !right.ok) {
+  if (!left.ok || !right.ok || left.valid == 0 || right.valid == 0) {
     const int fd = fileno(csv);
     if (start_offset >= 0) ftruncate(fd, start_offset);
     std::fclose(csv);
@@ -148,7 +149,8 @@ int run_dual_record(int argc, char** argv) {
   left_thread.join();
   right_thread.join();
   std::fclose(csv);
-  if (!left.ok || !right.ok) return StopRequested() ? 130 : 6;
+  if (!left.ok || !right.ok || left.frames == 0 || right.frames == 0)
+    return StopRequested() ? 130 : 6;
   return 0;
 }
 
@@ -200,7 +202,10 @@ int run_dual(int argc, char** argv) {
   std::thread left_thread(worker, 2, "left", &left), right_thread(worker, 3, "right", &right);
   left_thread.join();
   right_thread.join();
-  if (!left.ok || !right.ok) return StopRequested() ? 130 : 6;
+  if (!left.ok || !right.ok || left.frames == 0 || right.frames == 0) {
+    std::cerr << "dual stream unavailable\n";
+    return StopRequested() ? 130 : 6;
+  }
   return 0;
 }
 }

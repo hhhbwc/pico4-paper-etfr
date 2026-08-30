@@ -1,17 +1,41 @@
 #include "calibration_fit.h"
 #include "calibration_store.h"
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace paper_bridge;
 
 namespace {
-struct Accumulator { double x=0, y=0; size_t count=0; };
+struct Observation { Point pupil{}; float confidence=0; bool valid=false; };
+struct Accumulator { std::vector<Observation> samples; };
 struct Target { Point point{}; bool set=false; };
+
+float median(std::vector<float> values) {
+  if (values.empty()) return 0.0f;
+  std::sort(values.begin(), values.end());
+  const size_t middle = values.size() / 2;
+  return values.size() % 2 ? values[middle] : (values[middle - 1] + values[middle]) * 0.5f;
+}
+
+bool stable_samples(const Accumulator& a) {
+  if (a.samples.size() < 3) return false;
+  std::vector<float> xs, ys;
+  xs.reserve(a.samples.size()); ys.reserve(a.samples.size());
+  for (const auto& sample : a.samples) { xs.push_back(sample.pupil.x); ys.push_back(sample.pupil.y); }
+  const float cx = median(xs), cy = median(ys);
+  std::vector<float> dx, dy;
+  dx.reserve(xs.size()); dy.reserve(ys.size());
+  for (size_t i = 0; i < xs.size(); ++i) { dx.push_back(std::fabs(xs[i] - cx)); dy.push_back(std::fabs(ys[i] - cy)); }
+  const float mad_x = median(dx), mad_y = median(dy);
+  const float scale = std::max(1.0f, std::max(std::fabs(cx), std::fabs(cy)));
+  return std::isfinite(mad_x) && std::isfinite(mad_y) && std::max(mad_x, mad_y) <= scale * 0.25f;
+}
 
 bool parse_row(const std::string& line, int* id, Point* target, bool* left,
                Point* pupil, float* confidence, bool* valid) {
@@ -46,17 +70,36 @@ int main(int argc, char** argv) {
     if (!valid || confidence < 0.5f) continue;
     if (targets[id].set && (targets[id].point.x != target.x || targets[id].point.y != target.y)) { std::cerr << "target mismatch\n"; return 6; }
     targets[id] = {target, true};
-    Accumulator& a = is_left ? left[id] : right[id]; a.x += pupil.x; a.y += pupil.y; ++a.count;
+    Accumulator& a = is_left ? left[id] : right[id];
+    a.samples.push_back({pupil, confidence, true});
   }
   std::array<LabeledObservation,9> left_obs{}, right_obs{}; std::array<Point,9> target_points{};
   for (size_t i=0; i<9; ++i) {
-    if (!targets[i].set || left[i].count == 0 || right[i].count == 0) { std::cerr << "missing target or eye sample\n"; return 7; }
+    if (!targets[i].set || !stable_samples(left[i]) || !stable_samples(right[i])) { std::cerr << "missing target or stable eye sample\n"; return 7; }
     target_points[i] = targets[i].point;
-    left_obs[i] = {{float(left[i].x / left[i].count), float(left[i].y / left[i].count)}, target_points[i], true};
-    right_obs[i] = {{float(right[i].x / right[i].count), float(right[i].y / right[i].count)}, target_points[i], true};
+    auto aggregate = [](const Accumulator& a) {
+      std::vector<float> xs, ys; xs.reserve(a.samples.size()); ys.reserve(a.samples.size());
+      for (const auto& s : a.samples) { xs.push_back(s.pupil.x); ys.push_back(s.pupil.y); }
+      std::sort(xs.begin(), xs.end()); std::sort(ys.begin(), ys.end());
+      const size_t trim = xs.size() >= 5 ? xs.size() / 10 : 0;
+      double x = 0, y = 0; size_t n = 0;
+      for (size_t j = trim; j + trim < xs.size(); ++j) { x += xs[j]; y += ys[j]; ++n; }
+      return Point{static_cast<float>(x / n), static_cast<float>(y / n)};
+    };
+    left_obs[i] = {aggregate(left[i]), target_points[i], true};
+    right_obs[i] = {aggregate(right[i]), target_points[i], true};
   }
   Calibration left_fit, right_fit; float left_rmse=0, right_rmse=0;
   if (!FitNinePointCalibration(left_obs, &left_fit, &left_rmse) || !FitNinePointCalibration(right_obs, &right_fit, &right_rmse)) { std::cerr << "fit failed\n"; return 8; }
+  const auto direction_ok = [](const Calibration& fit) {
+    const Point left = fit.Map({0.0f, 0.5f});
+    const Point right = fit.Map({1.0f, 0.5f});
+    const Point top = fit.Map({0.5f, 0.0f});
+    const Point bottom = fit.Map({0.5f, 1.0f});
+    return std::isfinite(left.x) && std::isfinite(right.x) && std::isfinite(top.y) && std::isfinite(bottom.y) &&
+           right.x > left.x && bottom.y > top.y;
+  };
+  if (!direction_ok(left_fit) || !direction_ok(right_fit)) { std::cerr << "calibration direction rejected\n"; return 9; }
   if (left_rmse > 0.15f || right_rmse > 0.15f || !CalibrationStore::Save(argv[2],
       [&] { std::array<Point,9> a{}; for (size_t i=0;i<9;++i) a[i]=left_obs[i].pupil; return a; }(),
       [&] { std::array<Point,9> a{}; for (size_t i=0;i<9;++i) a[i]=right_obs[i].pupil; return a; }(), target_points)) { std::cerr << "calibration rejected\n"; return 9; }
