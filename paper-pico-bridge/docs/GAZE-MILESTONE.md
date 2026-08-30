@@ -1,6 +1,6 @@
 # Gaze milestone
 
-The project now has a gaze-estimation boundary between pupil observations and the shared ABI:
+The project now has a gaze-estimation boundary between pupil observations and the shared ABI, plus a strict offline artifact path (`tools/calibrate_csv.cpp`) for externally labeled nine-point data:
 
 - Separate left/right calibration fits
 - Coordinate clamping to normalized `[0,1]`

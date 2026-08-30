@@ -14,4 +14,10 @@ Warm run on the connected A8110:
 - 195 rows marked valid by the detector
 - Left/right streams were captured concurrently and released cleanly
 
-The CSV is observation data only. It is not a calibration file: it has no target labels and cannot be passed to `--dual-live`. A valid binary calibration is exactly 216 bytes: nine left-eye input points, nine right-eye input points, and nine target points, with finite float coordinates. `CalibrationStore::Load` rejects any other length, truncated content, non-finite value, or non-invertible fit. No gaze validity or OpenXR injection is enabled until a user-facing nine-point calibration sequence has collected known target coordinates and fitted both eye mappings. A live run must point to the binary file produced by `CalibrationStore::Save`; if that file is missing or invalid, `--dual-live` exits with code 4 and publishes only a healthy heartbeat.
+The CSV is observation data only. It is not a calibration file: it has no target labels and cannot be passed to `--dual-live`. For externally labeled data, the `calibrate_csv <labeled.csv> <output.bin>` tool accepts this format:
+
+```text
+target_id,target_x,target_y,eye,x,y,confidence,valid
+```
+
+It requires all nine target IDs for both eyes, ignores invalid or low-confidence rows, averages the remaining samples per target, fits both affine mappings, performs a round-trip load check, and writes a valid binary calibration. A valid binary calibration is exactly 216 bytes: nine left-eye input points, nine right-eye input points, and nine target points, with finite float coordinates. `CalibrationStore::Load` rejects any other length, truncated content, non-finite value, or non-invertible fit. No gaze validity or OpenXR injection is enabled until a user-facing nine-point calibration sequence has collected known target coordinates and fitted both eye mappings. A live run must point to the binary file produced by `CalibrationStore::Save`; if that file is missing or invalid, `--dual-live` exits with code 4 and publishes only a healthy heartbeat.
