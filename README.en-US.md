@@ -6,7 +6,9 @@ A research and development project for connecting the third-party **Paper Tracke
 
 ## Project Status
 
-The maintainable implementation is in [`paper-pico-bridge/`](paper-pico-bridge/). It is a separate CMake-based native project with a device daemon, transport parsers, JPEG decoding, pupil detection, calibration, a versioned shared-memory ABI, tests, and a read-only Zygisk runtime probe.
+A separate Java calibration Activity now lives in [`paper-pico-bridge/calibration-app/`](paper-pico-bridge/calibration-app/). It renders the nine targets on PICO's 2D virtual display and orchestrates the existing root capture and artifact tools. The Activity has been smoke-tested on A8110 Display 10 at 1602x902; headset presentation and real user calibration remain to be validated.
+
+The maintainable native implementation is in [`paper-pico-bridge/`](paper-pico-bridge/). It is a separate CMake-based native project with a device daemon, transport parsers, JPEG decoding, pupil detection, calibration, a versioned shared-memory ABI, tests, and a read-only Zygisk runtime probe.
 
 The verified device-side pipeline is:
 

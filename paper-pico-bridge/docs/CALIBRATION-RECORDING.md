@@ -26,7 +26,7 @@ It appends both eyes to a labeled CSV, including a monotonic timestamp:
 target_id,target_x,target_y,eye,x,y,confidence,valid,timestamp_ns
 ```
 
-Run it once for each target ID `0..8`, changing the displayed target coordinates before each invocation. The command does not display targets or fit calibration; it only binds the currently displayed target to the concurrent Paper observations. For externally labeled data, the `calibrate_csv <labeled.csv> <output.bin>` tool accepts this format:
+Run it once for each target ID `0..8`, changing the displayed target coordinates before each invocation. The command does not display targets or fit calibration; it only binds the currently displayed target to the concurrent Paper observations. The optional `calibration-app/` Android APK now provides this display and command orchestration on PICO's 2D virtual display; it requires both ARM64 tools to be staged at `/data/local/tmp/` and root authorization. For externally labeled data, the `calibrate_csv <labeled.csv> <output.bin>` tool accepts this format:
 
 ```text
 target_id,target_x,target_y,eye,x,y,confidence,valid[,timestamp_ns]

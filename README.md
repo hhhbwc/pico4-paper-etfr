@@ -61,7 +61,7 @@ bridge 的 Zygisk 组件仅匹配 OpenXR Runtime，并进行库映射、函数�
 
 ## 下一步
 
-1. 实现用户可操作的 Pico 端九点校准，生成受校验的二进制校准文件。
+1. 在 `paper-pico-bridge/calibration-app/` 构建并安装独立的 Pico 2D 九点校准 Activity；当前已验证可在独立虚拟 Display 全屏绘制目标，实际佩戴视野和交互仍需确认。
 2. 用真实校准验证 `--dual-live` 连续发布的 gaze 样本、稳定性和延迟。
 3. 建立 Paper gaze 平面坐标与 Pico Runtime 所需坐标空间之间的可验证映射。
 4. 验证 `pxr_eyepose` 的完整输出语义和生命周期。
