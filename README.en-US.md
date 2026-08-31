@@ -6,7 +6,7 @@ A research and development project for connecting the third-party **Paper Tracke
 
 ## Project Status
 
-A separate Java calibration Activity now lives in [`paper-pico-bridge/calibration-app/`](paper-pico-bridge/calibration-app/). It renders the nine targets on PICO's 2D virtual display and orchestrates the existing root capture and artifact tools. The Activity has been smoke-tested on A8110 Display 10 at 1602x902; headset presentation and real user calibration remain to be validated.
+A separate Java calibration Activity now lives in [`paper-pico-bridge/calibration-app/`](paper-pico-bridge/calibration-app/). It renders the nine targets on PICO's 2D virtual-display path and orchestrates the existing root capture and artifact tools. The APK now uses `su -mm -c` and never launches PaperTracker. On the tested A8110 it was assigned to a private 1602x902 virtual display, but a shell-launched smoke test left that display `OFF` while the PICO shell retained focus; real headset presentation, input routing, and user calibration remain unverified.
 
 The maintainable native implementation is in [`paper-pico-bridge/`](paper-pico-bridge/). It is a separate CMake-based native project with a device daemon, transport parsers, JPEG decoding, pupil detection, calibration, a versioned shared-memory ABI, tests, and a read-only Zygisk runtime probe.
 
@@ -19,12 +19,14 @@ Paper USB eye devices
 → JPEG decoding on Pico
 → pupil candidate detection
 → left/right timestamp pairing
-→ calibrated gaze sample publication
+→ versioned gaze sample publication
 ```
 
-The current status is deliberately split into two modes:
+The current status is deliberately split into bounded diagnostic, recording, wake, and live modes:
 
 - `--dual` is a diagnostic mode. It captures both eyes, decodes frames, runs the pupil detector, and reports statistics. It does not publish a valid gaze sample.
+- `--diagnose-eyes <seconds>` is a bounded image diagnostic. It prints decoded dimensions, grayscale range/mean, dark-pixel ratio, detector counts, and saves the first JPEG for each eye under `/data/local/tmp/`. It does not alter calibration behavior.
+- `--wake-stream <seconds>` performs the statically recovered `WAKE,L=50,F=40\n` bulk-OUT write after CDC setup and requires complete JPEG frames from both eyes. It does not launch PaperTracker.
 - `--dual-live <seconds> <calibration-file>` is the explicit live mode. It requires a valid binary calibration file, pairs observations within a 50 ms window, and publishes only fresh fused samples.
 - `--target-record <id> <x> <y> <seconds> [csv]` appends labeled dual-eye observations for one currently displayed calibration target. The companion Pico calibration Activity provides the target display and command orchestration.
 
@@ -145,6 +147,18 @@ Captures one selected Paper device and prints parser, JPEG, and pupil-detection 
 ```
 
 Captures both eye devices concurrently in diagnostic mode. It does not publish valid gaze.
+
+```text
+--diagnose-eyes <seconds>
+```
+
+Captures both eyes with the bounded native wake path, prints decoded image statistics and transform-control counts, and saves one first-frame JPEG per eye under `/data/local/tmp/` for offline inspection. These transform controls are diagnostic-only and are never used by calibration.
+
+```text
+--wake-stream <seconds>
+```
+
+Runs the bounded native stream wake and verifies complete JPEG frames from both eyes without starting the Paper application.
 
 ```text
 --dual-record <seconds> [csv]

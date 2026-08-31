@@ -15,13 +15,14 @@ Paper USB 双眼设备
 → Pico 本地 JPEG 解码
 → 瞳孔候选检测
 → 双眼时间配对
-→ 已校准 gaze 样本共享内存
+→ 版本化 gaze 样本共享内存
 ```
 
 - 动态发现三个 Paper USB 设备：Face `0425:0001`、Left `0425:0002`、Right `0425:0003`。
 - 当前设备实际输出是连续 raw JPEG，而非只有 APK 中存在的 `JPG0` 记录格式；bridge 同时保留两种解析器。
-- Pico 本地已验证左右眼并行读取、JPEG 解码和瞳孔候选检测。
-- `--dual` 是只读诊断采集模式；`--dual-live <seconds> <calibration-file>` 只在有效二进制九点校准文件存在时发布融合 gaze 样本。
+- Pico 本地已验证左右眼并行读取和 JPEG 解码；基础候选检测目前只作为实验性诊断，右眼实时帧多轮为 `0/N`，不能视为校准可用。
+- `--dual` 是只读诊断采集模式；`--diagnose-eyes` 额外输出两眼图像统计并保存首帧，仅用于定位图像极性/取景问题；`--dual-live <seconds> <calibration-file>` 只在有效二进制九点校准文件存在时发布融合 gaze 样本。
+- `--wake-stream <seconds>` 会在 CDC 初始化和 DTR 后向已发现的 bulk-OUT 写入静态恢复的 `WAKE,L=50,F=40\n`，并要求双眼收到完整 JPEG；它不启动 Paper App。
 - `--target-record <id> <x> <y> <seconds> [csv]` 会为一个已显示的九点目标追加带标签的双眼采集数据；独立 Pico 校准 Activity 负责显示目标并编排采集命令。
 - 所有 USB 采集命令限制为 1 到 30 秒，使用独占 daemon 锁；并发启动会失败，而不是争抢 USB。任一眼采集失败时，live 模式不发布完成 heartbeat，target 采集会回滚本次追加行。
 - 缺失、CSV、截断或非有限数值校准文件均会被拒绝，只留下健康 heartbeat。
@@ -61,7 +62,7 @@ bridge 的 Zygisk 组件仅匹配 OpenXR Runtime，并进行库映射、函数�
 
 ## 下一步
 
-1. 在 `paper-pico-bridge/calibration-app/` 构建并安装独立的 Pico 2D 九点校准 Activity；当前已验证可在独立虚拟 Display 全屏绘制目标，实际佩戴视野和交互仍需确认。校准模型已升级为每眼二维 projective homography，并加入稳定样本聚合与方向检查；216 字节文件仍是 Pico 原始控制点格式，不是 PC 专有配置格式。
+1. 完成 `paper-pico-bridge/calibration-app/` 的 PICO 虚拟显示呈现和输入路由验证。目前 APK 已改用 `su -mm -c`，不启动 Paper App；Activity 会被分配到 PICO 私有虚拟 Display，但 shell smoke test 中该 Display 仍为 `OFF`，真实佩戴视野尚未确认。现有模型仍是每眼二维 projective homography；216 字节文件仍是 Pico 原始控制点格式，不是 PC 专有配置格式，也不是最终的 3D 校准格式。
 2. 用真实校准验证 `--dual-live` 连续发布的 gaze 样本、稳定性和延迟。
 3. 建立 Paper gaze 平面坐标与 Pico Runtime 所需坐标空间之间的可验证映射。
 4. 验证 `pxr_eyepose` 的完整输出语义和生命周期。

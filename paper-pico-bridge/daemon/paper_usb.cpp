@@ -36,7 +36,10 @@ static void describe_interfaces(const std::string& sys, UsbDeviceInfo* x) {
       if (std::strncmp(q->d_name,"ep_",3)!=0) continue;
       std::string ep = ip + q->d_name + "/";
       int addr=0, type=0; read_int(ep+"bEndpointAddress",16,&addr); read_int(ep+"bmAttributes",16,&type);
-      if ((addr & 0x80) && (type & 3) == 2 && x->bulk_in < 0) x->bulk_in = addr;
+      if ((type & 3) == 2) {
+        if ((addr & 0x80) && x->bulk_in < 0) x->bulk_in = addr;
+        if (!(addr & 0x80) && x->bulk_out < 0) x->bulk_out = addr;
+      }
     }
     closedir(ed);
   }
@@ -57,7 +60,7 @@ static bool scan(const std::function<bool(const UsbDeviceInfo&)>& cb) {
 }
 bool PaperUsb::Enumerate(std::string* d) const {
   int count=0; bool ok=scan([&](const UsbDeviceInfo& x){
-    if (x.vid==0x0425) { ++count; std::fprintf(stdout,"Paper USB %04x:%04x %s control=%d data=%d bulk-in=0x%02x\n",x.vid,x.pid,x.path.c_str(),x.control_if,x.data_if,x.bulk_in); }
+    if (x.vid==0x0425) { ++count; std::fprintf(stdout,"Paper USB %04x:%04x %s control=%d data=%d bulk-in=0x%02x bulk-out=0x%02x\n",x.vid,x.pid,x.path.c_str(),x.control_if,x.data_if,x.bulk_in,x.bulk_out); }
     return true;
   });
   if (d) *d="matched Paper devices="+std::to_string(count)+"; descriptor discovery only"; return ok;
@@ -65,7 +68,8 @@ bool PaperUsb::Enumerate(std::string* d) const {
 bool PaperUsb::Find(uint16_t pid, UsbDeviceInfo* out, std::string* d) const {
   if (!out) return false; bool found=false; scan([&](const UsbDeviceInfo& x){if(x.vid==0x0425&&x.pid==pid){*out=x;found=true;return false;}return true;}); if(d)*d=found?"found":"not found"; return found;
 }
-bool PaperUsb::Capture(const UsbDeviceInfo& x, int duration_ms, const FrameCallback& cb, std::string* d) {
+bool PaperUsb::Capture(const UsbDeviceInfo& x, int duration_ms, const FrameCallback& cb, std::string* d,
+                       const uint8_t* wake, size_t wake_len) {
   if (duration_ms <= 0 || duration_ms > 30000 || x.bulk_in < 0) { if (d) *d = "invalid bounded capture request"; return false; }
   stop_requested_.store(false);
   if (chmod(x.path.c_str(), 0666) != 0 && errno != EPERM) {
@@ -90,8 +94,21 @@ bool PaperUsb::Capture(const UsbDeviceInfo& x, int duration_ms, const FrameCallb
   unsigned char coding[7] = {0x00, 0xc2, 0x01, 0x00, 0x00, 0x00, 0x08};
   paper_usbdevfs_ctrltransfer ctl{0x21, 0x20, 0, static_cast<unsigned short>(x.control_if < 0 ? 0 : x.control_if), 7, 1000, coding};
   if (ioctl(fd, USBDEVFS_CONTROL, &ctl) < 0) { if (d) *d = std::string("line coding failed: ") + strerror(errno); cleanup(); return false; }
+  diag += "line-coding=115200-8N1; ";
   paper_usbdevfs_ctrltransfer dtr{0x21, 0x22, 1, static_cast<unsigned short>(x.control_if < 0 ? 0 : x.control_if), 0, 1000, nullptr};
   if (ioctl(fd, USBDEVFS_CONTROL, &dtr) < 0) { if (d) *d = std::string("DTR failed: ") + strerror(errno); cleanup(); return false; }
+  diag += "dtr=on; ";
+  if (wake && wake_len > 0) {
+    if (x.bulk_out < 0) { if (d) *d = diag + "wake requested but no bulk-out endpoint"; cleanup(); return false; }
+    paper_usbdevfs_bulktransfer out{static_cast<unsigned int>(x.bulk_out), static_cast<unsigned int>(wake_len), 1000, const_cast<uint8_t*>(wake)};
+    const int written = ioctl(fd, USBDEVFS_BULK, &out);
+    if (written != static_cast<int>(wake_len)) {
+      if (d) *d = diag + "wake-write=" + std::to_string(written) + "/" + std::to_string(wake_len) + ":" + strerror(errno);
+      cleanup();
+      return false;
+    }
+    diag += "wake-write=" + std::to_string(written) + "; ";
+  }
   std::vector<uint8_t> buf(16384);
   const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(duration_ms);
   int reads = 0, last_errno = 0;

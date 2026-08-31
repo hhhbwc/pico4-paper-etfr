@@ -7,6 +7,7 @@
 #include "jpeg_decoder.h"
 #include "pupil_detector.h"
 #include "gaze_estimator.h"
+#include <algorithm>
 #include <chrono>
 #include <cerrno>
 #include <cmath>
@@ -54,31 +55,124 @@ void publish_heartbeat(SamplePublisher* publisher) {
   PublishSample(publisher->shared(), heartbeat);
 }
 
+struct CaptureDiagnostics {
+  int width = 0;
+  int height = 0;
+  uint8_t min_value = 255;
+  uint8_t max_value = 0;
+  uint64_t pixels = 0;
+  uint64_t sum = 0;
+  uint64_t dark_pixels = 0;
+  size_t decoded = 0;
+  size_t decode_failures = 0;
+  size_t variant_valid[8]{};
+  std::string dump_path;
+};
+
 struct CaptureResult { bool ok = false; size_t frames = 0; size_t valid = 0; size_t bytes = 0; std::string diagnostic; };
 
 CaptureResult capture_eye(uint16_t pid, int seconds, const char* label,
-                          const std::function<void(const PupilObservation&)>& on_observation) {
+                          const std::function<void(const PupilObservation&)>& on_observation,
+                          bool wake = false, CaptureDiagnostics* details = nullptr) {
   PaperUsb usb;
   UsbDeviceInfo info;
   CaptureResult result;
   if (!usb.Find(pid, &info, &result.diagnostic)) return result;
   RawJpegParser raw;
+  static constexpr uint8_t kWake[] = {'W','A','K','E',',','L','=','5','0',',','F','=','4','0','\n'};
   result.ok = usb.Capture(info, seconds * 1000, [&](const UsbDeviceInfo&, const uint8_t* data, size_t n) {
     result.bytes += n;
     std::vector<std::vector<uint8_t>> frames;
     raw.Feed(data, n, &frames);
     for (const auto& frame : frames) {
       GrayImage image;
-      if (!DecodeJpegToGray(frame.data(), frame.size(), &image)) continue;
+      if (!DecodeJpegToGray(frame.data(), frame.size(), &image)) {
+        if (details) ++details->decode_failures;
+        continue;
+      }
+      if (details) {
+        if (details->decoded == 0) {
+          details->width = image.width;
+          details->height = image.height;
+          details->dump_path = std::string("/data/local/tmp/paper-pico-") + label + "-first.jpg";
+          FILE* dump = std::fopen(details->dump_path.c_str(), "wb");
+          if (dump) {
+            std::fwrite(frame.data(), 1, frame.size(), dump);
+            std::fclose(dump);
+          } else {
+            details->dump_path.clear();
+          }
+        }
+        const uint64_t count = uint64_t(image.width) * uint64_t(image.height);
+        uint64_t frame_sum = 0;
+        uint8_t frame_min = 255, frame_max = 0;
+        for (uint8_t value : image.pixels) {
+          frame_sum += value;
+          frame_min = std::min(frame_min, value);
+          frame_max = std::max(frame_max, value);
+        }
+        const int threshold = std::min(100, std::max(12, int(frame_sum / count) - 25));
+        uint64_t frame_dark = 0;
+        for (uint8_t value : image.pixels) if (value <= threshold) ++frame_dark;
+        details->min_value = std::min(details->min_value, frame_min);
+        details->max_value = std::max(details->max_value, frame_max);
+        details->pixels += count;
+        details->sum += frame_sum;
+        details->dark_pixels += frame_dark;
+        ++details->decoded;
+        const int variants[8][2] = {
+            {0, 0}, {1, 0}, {0, 1}, {1, 1},
+            {2, 0}, {2, 1}, {3, 0}, {3, 1}};
+        std::vector<uint8_t> transformed(image.pixels.size());
+        for (int variant = 0; variant < 8; ++variant) {
+          const int mode = variants[variant][0];
+          const bool invert = variants[variant][1] != 0;
+          for (int y = 0; y < image.height; ++y) {
+            for (int x = 0; x < image.width; ++x) {
+              int sx = x, sy = y;
+              if (mode == 1 || mode == 3) sx = image.width - 1 - x;
+              if (mode == 2 || mode == 3) sy = image.height - 1 - y;
+              uint8_t value = image.pixels[size_t(sy) * image.width + sx];
+              transformed[size_t(y) * image.width + x] = invert ? uint8_t(255 - value) : value;
+            }
+          }
+          if (PupilDetector().Detect(transformed.data(), image.width, image.height).valid)
+            ++details->variant_valid[variant];
+        }
+      }
       PupilObservation observation = PupilDetector().Detect(image.pixels.data(), image.width, image.height);
       ++result.frames;
       if (observation.valid) ++result.valid;
       if (on_observation) on_observation(observation);
     }
-  }, &result.diagnostic);
+  }, &result.diagnostic, wake ? kWake : nullptr, wake ? sizeof(kWake) : 0);
   std::cerr << label << " " << result.diagnostic << " frames=" << result.frames
             << " valid=" << result.valid << " bytes=" << result.bytes << "\n";
   return result;
+}
+
+void print_diagnostics(const char* label, const CaptureDiagnostics& details,
+                       const CaptureResult& result) {
+  const double mean = details.pixels == 0 ? 0.0 :
+      static_cast<double>(details.sum) / static_cast<double>(details.pixels);
+  const double dark_ratio = details.pixels == 0 ? 0.0 :
+      static_cast<double>(details.dark_pixels) / static_cast<double>(details.pixels);
+  std::cerr << "diagnostic " << label << " size=" << details.width << "x" << details.height
+            << " min=" << static_cast<int>(details.min_value)
+            << " max=" << static_cast<int>(details.max_value)
+            << " mean=" << mean
+            << " dark-ratio=" << dark_ratio
+            << " decoded=" << details.decoded
+            << " decode-failures=" << details.decode_failures
+            << " valid=" << result.valid << "/" << result.frames
+            << " variants=[";
+  for (size_t i = 0; i < 8; ++i) {
+    if (i) std::cerr << ",";
+    std::cerr << details.variant_valid[i];
+  }
+  std::cerr << "]";
+  if (!details.dump_path.empty()) std::cerr << " first=" << details.dump_path;
+  std::cerr << "\n";
 }
 
 int run_target_record(int argc, char** argv) {
@@ -187,6 +281,49 @@ int run_dual_live(int argc, char** argv) {
   return 0;
 }
 
+int run_wake_stream(int argc, char** argv) {
+  if (argc != 3) { std::cerr << "usage: --wake-stream <seconds 1..30>\n"; return 2; }
+  int seconds = 0;
+  if (!ParseBoundedSeconds(argv[2], &seconds)) { std::cerr << "invalid wake arguments\n"; return 2; }
+  auto worker = [&](uint16_t pid, const char* label, CaptureResult* result) {
+    *result = capture_eye(pid, seconds, label, {}, true);
+  };
+  CaptureResult left, right;
+  std::thread left_thread(worker, 2, "left", &left), right_thread(worker, 3, "right", &right);
+  left_thread.join();
+  right_thread.join();
+  if (!left.ok || !right.ok || left.frames == 0 || right.frames == 0) {
+    std::cerr << "wake stream unavailable\n";
+    return StopRequested() ? 130 : 6;
+  }
+  std::cout << "wake stream ready\n";
+  return 0;
+}
+
+int run_diagnose_eyes(int argc, char** argv) {
+  if (argc != 3) { std::cerr << "usage: --diagnose-eyes <seconds 1..30>\n"; return 2; }
+  int seconds = 0;
+  if (!ParseBoundedSeconds(argv[2], &seconds)) {
+    std::cerr << "invalid diagnostic arguments\n";
+    return 2;
+  }
+  auto worker = [&](uint16_t pid, const char* label, CaptureResult* result,
+                    CaptureDiagnostics* details) {
+    *result = capture_eye(pid, seconds, label, {}, true, details);
+  };
+  CaptureResult left, right;
+  CaptureDiagnostics left_details, right_details;
+  std::thread left_thread(worker, 2, "left", &left, &left_details);
+  std::thread right_thread(worker, 3, "right", &right, &right_details);
+  left_thread.join();
+  right_thread.join();
+  print_diagnostics("left", left_details, left);
+  print_diagnostics("right", right_details, right);
+  if (!left.ok || !right.ok || left.frames == 0 || right.frames == 0)
+    return StopRequested() ? 130 : 6;
+  return 0;
+}
+
 int run_dual(int argc, char** argv) {
   if (argc != 3) { std::cerr << "usage: --dual <seconds 1..30>\n"; return 2; }
   int seconds = 0;
@@ -226,6 +363,8 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--dual-record") return run_dual_record(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "--dual-live") return run_dual_live(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "--dual") return run_dual(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "--wake-stream") return run_wake_stream(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "--diagnose-eyes") return run_diagnose_eyes(argc, argv);
     if (argc == 2 && std::string(argv[1]) == "--service") {
       while (!StopRequested()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
       return 0;
@@ -244,7 +383,7 @@ int main(int argc, char** argv) {
       std::cout << "sample published\n";
       return 0;
     }
-    std::cerr << "usage: --service | --enumerate | --dual <seconds> | --dual-record <seconds> [csv] | --target-record <id> <x> <y> <seconds> [csv] | --dual-live <seconds> <calibration-file> | --self-test\n";
+    std::cerr << "usage: --service | --enumerate | --dual <seconds> | --wake-stream <seconds> | --diagnose-eyes <seconds> | --dual-record <seconds> [csv] | --target-record <id> <x> <y> <seconds> [csv] | --dual-live <seconds> <calibration-file> | --self-test\n";
     return 2;
   } catch (...) {
     std::cerr << "invalid daemon arguments\n";

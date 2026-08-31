@@ -140,7 +140,7 @@ public final class CalibrationActivity extends Activity {
 
   private boolean wakePaperStream(long token) {
     handler.post(() -> { if (active(token)) view.setStatus("检查 Paper 视频流"); });
-    CommandResult ready = runRoot(DAEMON + " --dual 2", 8000);
+    CommandResult ready = runRoot(DAEMON + " --wake-stream 3", 12000);
     return ready.code == 0 && active(token);
   }
 
@@ -178,7 +178,7 @@ public final class CalibrationActivity extends Activity {
   private CommandResult runRoot(String command, long timeoutMs) {
     Process process = null;
     try {
-      process = new ProcessBuilder("su", "-c", command).redirectErrorStream(true).start();
+      process = new ProcessBuilder("su", "-mm", "-c", command).redirectErrorStream(true).start();
       activeProcess = process;
       StringBuilder output = new StringBuilder();
       BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
